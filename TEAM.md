@@ -10,7 +10,7 @@
 
 **Team members:**
 
-* Student 1's u210518 - Judit Jiménez Fornos - judit.jimenez04@estudiant.upf.edu - JuddZzz
+* Student 1's 210518 - Judit Jiménez Fornos - judit.jimenez04@estudiant.upf.edu - JuddZzz
 * Student 2's Student number - Full Name - Student email - Student Github id
 * Student 3's Student number - Full Name - Student email - Student Github id
 
