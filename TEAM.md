@@ -2,15 +2,15 @@
 
 **Course:** _[fill your course code and name]_
 
-**Semester:** Semester 2, 2020
+**Semester:** Semester 1, 2026
 
-**Instructor:** _[name of your instructor]_
+**Instructor:** _[Ahana deb]_
 
-**Team name:** _[replace this with team name in plan text]_
+**Team name:** _[Fantasmikos]_
 
 **Team members:**
 
-* Student 1's Student number - Full Name - Student email - Student Github id
+* Student 1's u210518 - Judit Jiménez Fornos - judit.jimenez04@estudiant.upf.edu - JuddZzz
 * Student 2's Student number - Full Name - Student email - Student Github id
 * Student 3's Student number - Full Name - Student email - Student Github id
 
