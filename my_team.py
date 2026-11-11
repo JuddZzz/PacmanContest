@@ -45,6 +45,7 @@ class ReflexCaptureAgent(CaptureAgent):
     """
     A base class for reflex agents that choose score-maximizing actions
     """
+    low_food = True
 
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
@@ -70,7 +71,7 @@ class ReflexCaptureAgent(CaptureAgent):
 
         food_left = len(self.get_food(game_state).as_list())
 
-        if food_left <= 2:
+        if food_left <= 2 and self.low_food:
             best_dist = 9999
             best_action = None
             for action in actions:
@@ -127,12 +128,38 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
   we give you to get an idea of what an offensive agent might look like,
   but it is by no means the best or only way to build an offensive agent.
   """
+    low_food = False
+    def register_initial_state(self, game_state): 
+        super().register_initial_state(game_state)
 
+        walls = game_state.get_walls() #reiceve walls
+        if self.red:
+            home_x = walls.width // 2 - 1 #if we are red, this is our home
+        
+        else:
+            home_x = walls.width // 2 #if we are blue, this is our home
+
+        self.home_positions = [] 
+
+        for i in range(walls.height): #we look at the middle point where the two bases are separated
+            if not walls[home_x][i]: #if in this coordinate there is no wall
+                self.home_positions.append((home_x,i)) #we found a path that let us go home
+        
+
+    def base_distance(self, position): #we compute the shortest distance from our position to the base
+        min_distance = 100000000
+        for i in self.home_positions:
+            this_dist = self.get_maze_distance(position, i)
+            min_distance = min(min_distance,this_dist)
+        return min_distance
+    
     def get_features(self, game_state, action):
         features = util.Counter()
         successor = self.get_successor(game_state, action)
         food_list = self.get_food(successor).as_list()
         features['successor_score'] = -len(food_list)  # self.getScore(successor)
+        agent_state = successor.get_agent_state(self.index) #state of successor
+        my_pos = agent_state.get_position() #position of successor
 
         # Compute distance to the nearest food
 
@@ -140,10 +167,15 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
             my_pos = successor.get_agent_state(self.index).get_position()
             min_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
             features['distance_to_food'] = min_distance
+
+        features['return_cost'] = ( #If we have a lot of food we would like to return to the base
+            agent_state.num_carrying * self.base_distance(my_pos)
+        )        
+        
         return features
 
     def get_weights(self, game_state, action):
-        return {'successor_score': 100, 'distance_to_food': -1}
+        return {'successor_score': 100, 'distance_to_food': -1, 'return_cost': -5}
 
 
 class DefensiveReflexAgent(ReflexCaptureAgent):
@@ -288,16 +320,11 @@ def score_evaluation_function(current_game_state):
     """
     return current_game_state.get_score()
 
-
+"""
 class AlphaBetaAgent(CaptureAgent):
-    """
-    Your minimax agent with alpha-beta pruning (question 3)
-    """
 
     def get_action(self, game_state):
-        """
-        Returns the minimax action using self.depth and self.evaluation_function
-        """
+
         "*** YOUR CODE HERE ***"
         def min_score(game_state,agent_index,depth,alpha,beta): #returns the minimum score
 
@@ -407,3 +434,5 @@ class AlphaBetaAgent(CaptureAgent):
 
 
         util.raise_not_defined()
+
+"""
