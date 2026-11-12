@@ -146,12 +146,13 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
                 self.home_positions.append((home_x,i)) #we found a path that let us go home
         
 
-    def base_distance(self, position): #we compute the shortest distance from our position to the base
-        min_distance = 100000000
+    def base_distance(self, position,game_state): #we compute the shortest and safest distance from our position to the base
+        
+        best_min_distance = 100000000
         for i in self.home_positions:
             this_dist = self.get_maze_distance(position, i)
-            min_distance = min(min_distance,this_dist)
-        return min_distance
+            best_min_distance = min(best_min_distance,this_dist)
+        return best_min_distance
     
     def get_features(self, game_state, action):
         features = util.Counter()
@@ -168,14 +169,30 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
             min_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
             features['distance_to_food'] = min_distance
 
+
+        closest_danger_ghost = 10000 #ghost not scared
+        for ghost_i in self.get_opponents(successor):
+            this_ghost = successor.get_agent_state(ghost_i)
+            ghost_pos = this_ghost.get_position()
+
+            if not this_ghost.is_pacman:
+                if this_ghost.scared_timer == 0:
+                    if ghost_pos != None:
+                        this_dist = self.get_maze_distance(my_pos,ghost_pos)
+                        closest_danger_ghost = min(closest_danger_ghost,this_dist)
+            
+
+        features['danger'] = (
+                max(0, 5 - closest_danger_ghost) * (1 + agent_state.num_carrying)
+            )
         features['return_cost'] = ( #If we have a lot of food we would like to return to the base
-            agent_state.num_carrying * self.base_distance(my_pos)
+            agent_state.num_carrying * self.base_distance(my_pos,game_state)
         )        
         
         return features
 
     def get_weights(self, game_state, action):
-        return {'successor_score': 100, 'distance_to_food': -1, 'return_cost': -5}
+        return {'successor_score': 100, 'distance_to_food': -1, 'return_cost': -5, 'danger': -10}
 
 
 class DefensiveReflexAgent(ReflexCaptureAgent):
@@ -185,6 +202,28 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
     could be like.  It is not the best or only way to make
     such an agent.
     """
+
+    #Patrol position (with this the defender patrols near the entrances where a invader can enter your base)
+    def register_initial_state(self, game_state):
+        super().register_initial_state(game_state) #initial position
+
+        walls = game_state.get_walls() #gets if there's a wall
+
+        if self.red:
+            home_x = walls.width // 2 - 1 #if we're red team --> left, also // is integer division
+        else:
+            home_x = walls.width // 2 #if we're blue team
+
+        self.home_positions = [] #create empty list to store positions we can go to in the border
+
+        for i in range(walls.height): #visits all vertical coordinates
+            if not walls[home_x][i]: #true if position is not a wall
+                self.home_positions.append((home_x, i)) #store in the list we did the accessible positions to patrol in
+
+        #Chooses a central entrance as patrol target
+        self.patrol_target = self.home_positions[
+            len(self.home_positions) // 2
+        ]
 
     def get_features(self, game_state, action):
         features = util.Counter()
@@ -209,10 +248,15 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
         if action == rev: features['reverse'] = 1
 
+        if len(invaders) == 0: #when there's no invaders in the base, start patrol
+            features['patrol_distance'] = self.get_maze_distance(
+                my_pos, self.patrol_target
+            )
+
         return features
 
     def get_weights(self, game_state, action):
-        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2}
+        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'patrol_distance':-2, 'stop': -100, 'reverse': -2}
 
 
 
@@ -249,190 +293,81 @@ class ReflexAgent(CaptureAgent):
 
         return legal_moves[chosen_index]
 
-    def evaluation_function(self, current_game_state, action):
-        """
-        Design a better evaluation function here.
+"""
+def food_heuristic(state, problem):
 
-        The evaluation function takes in the current and proposed successor
-        GameStates (pacman.py) and returns a number, where higher numbers are better.
+    #function that computes h_n, in other words, the heuristic estimation
 
-        The code below extracts some useful information from the state, like the
-        remaining food (new_food) and Pacman position after moving (new_pos).
-        new_scared_times holds the number of moves that each ghost will remain
-        scared because of Pacman having eaten a power pellet.
+    position, food_grid = state
 
-        Print out these variables to see what you're getting, then combine them
-        to create a masterful evaluation function.
-        """
-        # Useful information you can extract from a GameState (pacman.py)
-        successor_game_state = current_game_state.generate_pacman_successor(action)  #next gamestate
-        new_pos = successor_game_state.get_pacman_position() #Pacman new position
-        new_food = successor_game_state.get_food() #remaining food
-        new_ghost_states = successor_game_state.get_ghost_states() #states of each ghost (position of each ghost)
-        new_scared_times = [ghostState.scared_timer for ghostState in new_ghost_states] #time remaining each ghost is scared
+    "*** YOUR CODE HERE ***"
+    food_list = food_grid.as_list() #list with food
 
+    h_n = len(food_list) #h(n)
+    
+    if h_n == 0: #goal aware. There is no food, so the heuristic estimation is 0
+        return 0
 
-        
-        "*** YOUR CODE HERE ***"
-        food_list = new_food.as_list() #coords of each food
+    A = -1 #Initialization of the max distance of a food from the pacman
+    pos1 = None # Position (currently none) of A
+    for i in food_list: # Iterate through the list of food
+        h_n = util.manhattan_distance(i,position) # Manhattan distance --> abs( xy1[0] - xy2[0] ) + abs( xy1[1] - xy2[1] )
+        if h_n>A: #Update A so it gets the needed max value
+            A = h_n
+            pos1 = i # Update coordinates of A
 
-        if not food_list: #there is no food
-            return 1000000 #we won
+            
+    B = -1 #We initialize B: It will have the maximum distance from pos1 to the next food
+    for i in food_list: #we iterate through the list of food
+            h_n = util.manhattan_distance(i,pos1) # Manhattan distance --> abs( xy1[0] - xy2[0] ) + abs( xy1[1] - xy2[1] )
+            if h_n>B: #If this new distance is bigger than the current distance....
+                B = h_n #We update B to the new distance
 
-        food_distances = []
-        for i in food_list:
-            dist = util.manhattan_distance(new_pos,i) #we store the distance from our pacman to
-            food_distances.append(dist)               #each food
-
-        closest_food_dist = min(food_distances) #closest food
-
-
-
-        closest_danger_ghost = 10000 #ghost not scared
-        for ghostState in new_ghost_states:
-            time_scared_ghost = ghostState.scared_timer #time remaining ghost i is scared
-            pos_ghost = ghostState.get_position() #position of ghost i
-            dist_ghost = util.manhattan_distance(new_pos,pos_ghost) #distance between this ghost and pacman
-
-            if time_scared_ghost == 0: #if the ghost is aggressive
-                if dist_ghost<closest_danger_ghost: ##if this distance is closer to pacman...
-                    closest_danger_ghost = dist_ghost #this is the new dangerous ghost
-
-        score = successor_game_state.get_score() #modify score after we see the next food and ghost
-
-        if closest_danger_ghost<=2:
-            score-=1000 #dangerous ghost, we must leave. we penalize more
-        elif closest_danger_ghost<=5:
-            score-=100 #ghost not too close, but he is approaching
-
-        score+=1/closest_food_dist #the closer the better. 
-                                   #if it is not very close, the division helps us penalize the score
-
-        return score
-
-def score_evaluation_function(current_game_state):
-    """
-    This default evaluation function just returns the score of the state.
-    The score is the same one displayed in the Pacman GUI.
-
-    This evaluation function is meant for use with adversarial search agents
-    (not reflex agents).
-    """
-    return current_game_state.get_score()
+    return A+B #We return the sum of the 2 distances
 
 """
-class AlphaBetaAgent(CaptureAgent):
 
-    def get_action(self, game_state):
+"""
+def a_star_search(problem, heuristic=null_heuristic):
+    "*** YOUR CODE HERE ***"
 
-        "*** YOUR CODE HERE ***"
-        def min_score(game_state,agent_index,depth,alpha,beta): #returns the minimum score
+    visited = set() #list of visited paths. In the begginning, this is empty
+    
+    priorqueue = util.PriorityQueue() #We need a priority queue to know which path do we take  
 
-            v = float("inf") #minimum score
-            poss_actions = game_state.get_legal_actions(agent_index) #actions that can do this ghost
-            
-            num_agents = game_state.get_num_agents() #number of agents
-            next_agent = agent_index+1 #next agent
+    start_heuristic = heuristic(problem.get_start_state(),problem) #we initialize the heuristic funcion giving 2 arguments:
+                                                                   #our problem
+                                                                   #the initial position
+    
+    priorqueue.push((problem.get_start_state(),[],0),start_heuristic) #we store our initial position, 
+    #the action we take (initially no action), initial cost (0), and the heuristic function to find the shortest distance
+    
+    while not priorqueue.is_empty():
+        coords, direction, cost = priorqueue.pop() #we receive the state with less cost h(n) + g(n) (coordinates (x,y) of the possible visit) 
+                                        #the type of movement (if we go north, south, east or west) 
+                                        #and cost
 
-            #Base case
-            if game_state.is_win():
-                return self.evaluation_function(game_state) #Pacman win no matter the actions
+        #case number 1: we reach the goal:
+        if problem.is_goal_state(coords): 
+            return direction #we return to which direction we went
 
-            elif game_state.is_lose():
-                return self.evaluation_function(game_state) #Pacman loses no matter the actions
+        #case number 2: we didn't reach the goal, we need to find it
 
+        if coords not in visited: #we only do the next lines of code if the node was not visited before
+            visited.add(coords) #we store the coordinates because now they will be visited (so we won't visit it again)
 
-            if next_agent >= num_agents: #if the next agent is the pacman (because we already did the actions of all ghosts), we reset next agent to 0
-                next_agent = 0
-                depth-=1 #Decrease depth because we finished 1 depth
+            for i in problem.get_successors(coords): #i is formed of [(coordinates x,y),movement,cost]
+                next_coords = i[0] #next coords (x,y)
+                next_dir = i[1] #south,west...
+                next_cost = i[2] #next Cost
 
-            if depth<0:
-                return self.evaluation_function(game_state) #end of the depth
-            
-            #Recursive case
-            for i in poss_actions:
-                next_game_state = game_state.generate_successor(agent_index,i) #next state
+                g_n = cost + next_cost #current total cost
+                h_n = heuristic(next_coords,problem) #heuristic estimation
+                total_sum = g_n + h_n #we do the sum of the total cost and the 
+                #Manhattan distance heuristic
 
-                if next_agent!=0: #if the next agent is not pacman
-                    score = min_score(next_game_state,next_agent,depth,alpha,beta) #we receive the min score from the next state           
+                if next_coords not in visited:  #We will do this movement because the coordinates were not visited
+                    priorqueue.push((next_coords, direction + [next_dir],g_n),total_sum) #we store it for later
 
-
-                else: #if the next agent is pacman
-                    score = max_score(next_game_state,next_agent,depth,alpha,beta) #we receive the max score from the next state
-
-                v = min(score,v) #we update v to the minimum between v and score
-
-                if v<alpha: #alpha-cut: alpha is greater than v. We return v
-                    return v
-
-                if v<beta: #we update beta if v is smaller than beta
-                    beta = v    
-
-            return v #return v
-
-
-        def max_score(game_state,agent_index,depth,alpha,beta): #returns the maximum score 
-
-            v = -float("inf") #max score
-            poss_actions = game_state.get_legal_actions(agent_index) #actions that pacman can do
-            next_agent = agent_index+1 #next agent
-
-            #Base case
-            if game_state.is_win(): 
-                return self.evaluation_function(game_state) #Pacman win no matter the actions
-            
-            elif game_state.is_lose(): 
-                return self.evaluation_function(game_state) #Pacman loses no matter the actions
-            
-            elif depth<=0: 
-                return self.evaluation_function(game_state) #end of the depth
-            
-            #Recursive case
-            for i in poss_actions:
-                next_game_state = game_state.generate_successor(agent_index,i) #next game state 
-            
-                score = min_score(next_game_state,next_agent,depth,alpha,beta) #set score value to minimum
-
-                v = max(score,v) #v is the max value between v and score
-
-                if v>beta: #beta cut --> v is greater than beta
-                    return v
-
-                if v>alpha: #in case v is bigger than alpha, modify alpha value to v
-                    alpha = v
-
-
-            return v #return v
-
-        #initialize variables
-
-        #v > beta to do beta cut
-        alpha = -float("inf")
-        beta = float("inf")
-
-        start_index = 0 #pacman starts
-        depth = self.depth #depth of tree
-        actions = game_state.get_legal_actions(start_index) #actions of pacman
-        best_action = actions[0] #initialize best action
-        v = -float("inf") #initialize highest score
-
-        for i in actions: #loop through actions
-            next_game_state = game_state.generate_successor(start_index,i) #get next game state
-            score = min_score(next_game_state,start_index+1,depth,alpha,beta) #set total score as the minimum
-
-            if score>v: #updating v
-                v = score
-                best_action = i #we update best action
-
-            if v>beta: #beta cut since v>beta. we return the best action
-                return best_action
-
-            if v>alpha: #in case v is bigger than alpha, modify alpha value to v
-                alpha = v
-
-        return best_action #return the best action
-
-
-        util.raise_not_defined()
-
+    util.raise_not_defined()
 """
