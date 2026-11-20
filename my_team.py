@@ -221,7 +221,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
             this_ghost = successor.get_agent_state(ghost_i)
             ghost_pos = this_ghost.get_position()
 
-            if not this_ghost.is_pacman:
+            if not this_ghost.is_pacman: #dangerous ghost
                 if this_ghost.scared_timer == 0:
                     if ghost_pos != None:
                         ghost_pos = nearest_point(ghost_pos)
@@ -244,26 +244,26 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
                 else:
                     entry_x = walls.width // 2 - 1
 
-                entry_positions = []
+                entry_positions = [] #possible entries to enemy base
                 for y in range(walls.height):
                     if not walls[entry_x][y]:
                         entry_positions.append((entry_x, y))
 
                 min_distance = float('inf')
                 if entry_positions: 
-                    for food in food_list:
+                    for food in food_list: #food and entrance
                         for entry in entry_positions:
                             route_cost = self.get_maze_distance(my_pos, entry)
                             route_cost += self.get_maze_distance(entry, food)
 
-                            if dangerous_ghosts:
+                            if dangerous_ghosts: #if there are dangerous ghosts
                                 nearest_defender = float('inf')
                                 for ghost in dangerous_ghosts:
                                     distance = self.get_maze_distance(entry, ghost)
                                     if distance < nearest_defender:
-                                        nearest_defender = distance
+                                        nearest_defender = distance #we get the nearest danger ghost
 
-                                route_cost += max(0, 4 - nearest_defender)
+                                route_cost += max(0, 4 - nearest_defender) #cost is higher for nearest ghost
 
                             if route_cost < min_distance:
                                 min_distance = route_cost
@@ -280,12 +280,12 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
             )
 
         capsules = self.get_capsules(successor) #capsules to scare the ghost
-        if capsules and closest_danger_ghost <= 5 and not self.returning:
+        if capsules and closest_danger_ghost <= 5 and not self.returning: #if we don't ho home and there is a dangerous ghost
             capsule_distance = float('inf')
-            for capsule in capsules:
+            for capsule in capsules: #find a capsule
                 distance = self.get_maze_distance(my_pos, capsule)
                 if distance < capsule_distance:
-                    capsule_distance = distance
+                    capsule_distance = distance #get the closest capsule
             features['capsule_distance'] = capsule_distance 
 
         features['return_cost'] = ( #If we have a lot of food we would like to return to the base
@@ -295,22 +295,11 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         return features
 
     def get_weights(self, game_state, action):
-        if self.returning:
-            return {
-                'successor_score': 0,
-                'distance_to_food': 0,
-                'return_cost': -10,
-                'danger': -10,
-                'capsule_distance': 0,
-            }
+        if self.returning: #values if we want to go home
+            return {'successor_score': 0, 'distance_to_food': 0, 'return_cost': -10, 'danger': -10, 'capsule_distance': 0,}
 
-        return {
-            'successor_score': 100,
-            'distance_to_food': -1,
-            'return_cost': -5,
-            'danger': -10,
-            'capsule_distance': -20,
-        }
+        #values if we are attacking
+        return {'successor_score': 100, 'distance_to_food': -1, 'return_cost': -5, 'danger': -10, 'capsule_distance': -20,}
 
 
 class DefensiveReflexAgent(ReflexCaptureAgent):
