@@ -12,8 +12,7 @@ import contest.util as util
 from contest.capture_agents import CaptureAgent
 from contest.game import Directions
 from contest.util import nearest_point
-
-
+from collections import deque
 #################
 # Team creation #
 #################
@@ -310,295 +309,163 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
     such an agent.
     """
 
-    #Patrol position (with this the defender patrols near the entrances where a invader can enter your base)
     def register_initial_state(self, game_state):
-        super().register_initial_state(game_state) #initial position
+        super().register_initial_state(game_state) # init the parent CaptureAgent
 
-        walls = game_state.get_walls() #gets if there's a wall
+        walls = game_state.get_walls()  #determine the border column according to the team's side
+        home_x = (walls.width // 2) - 1 if self.red else (walls.width // 2)
 
-        if self.red:
-            home_x = walls.width // 2 - 1 #if we're red team --> left, also // is integer division
-        else:
-            home_x = walls.width // 2 #if we're blue team
-
-        self.home_positions = [] #create empty list to store positions we can go to in the border
-
-        for i in range(walls.height): #visits all vertical coordinates
-            if not walls[home_x][i]: #true if position is not a wall
-                self.home_positions.append((home_x, i)) #store in the list we did the accessible positions to patrol in
-
-        # Sort positions from top to bottom
+        #store all accessible positions along the border of two sides
+        self.home_positions = [
+            (home_x, y)
+            for y in range(walls.height)
+            if not walls[home_x][y]
+        ]
+        
         self.home_positions.sort(key=lambda pos: pos[1])
 
-        # Start at the top and move downwards
+        #init the patrol route, moving from bottom to top
         self.patrol_index = 0
         self.patrol_direction = 1
-        
+        #keep track of defended food to detect recently invaded areas
+        self.prev_food = self.get_food_you_are_defending(game_state).as_list()
+        self.recent_loss_target = None
+
     def update_patrol_index(self, game_state):
+        #avoid invalid indices
+        if len(self.home_positions) <= 1:
+            self.patrol_index = 0
+            return
 
         my_pos = game_state.get_agent_position(self.index)
+        if my_pos is None:
+            return
 
         target = self.home_positions[self.patrol_index]
 
+        #go to the next patrol position when the current one is reached
         if nearest_point(my_pos) == target:
 
-            # Reached the bottom: reverse upwards
-            if self.patrol_index == len(self.home_positions) - 1:
+            next_index = self.patrol_index + self.patrol_direction
+
+            #reverse direction at the end of the patrol route
+            if next_index >= len(self.home_positions):
                 self.patrol_direction = -1
-
-            # Reached the top: reverse downwards
-            elif self.patrol_index == 0:
+                next_index = len(self.home_positions) - 2
+            elif next_index < 0:
                 self.patrol_direction = 1
+                next_index = 1
+            self.patrol_index = max(0, min(len(self.home_positions) - 1, next_index))
 
-            self.patrol_index += self.patrol_direction
-            
+    def _update_lost_food_target(self, game_state):  #compare current defended food with the previous observation
+        current_food = self.get_food_you_are_defending(game_state).as_list()
+        eaten = [pos for pos in self.prev_food if pos not in current_food]
+        self.prev_food = current_food
+
+        my_pos = game_state.get_agent_position(self.index)
+
+        #if food has disappeared, investigate the closest affected position
+        if eaten and my_pos is not None:
+            self.recent_loss_target = min(eaten, key=lambda pos: self.get_maze_distance(nearest_point(my_pos), pos))
+
+        #clear target once the agent reaches the suspected invasion area
+        elif self.recent_loss_target is not None and my_pos is not None:
+            if nearest_point(my_pos) == self.recent_loss_target:
+                self.recent_loss_target = None
+
     def choose_action(self, game_state):
-        enemies = [
-            game_state.get_agent_state(i)
-            for i in self.get_opponents(game_state)
-        ]
+        self._update_lost_food_target(game_state)  #update the suspected invasion area before selecting an action
 
-        invaders = [
-            a for a in enemies
-            if a.is_pacman and a.get_position() is not None
-        ]
+        enemies = [game_state.get_agent_state(i) for i in self.get_opponents(game_state)]  #identify opponents whose positions are currently visible
+        invaders = [a for a in enemies if a.is_pacman and a.get_position() is not None]
 
-        # If an invader is visible, use the defensive evaluation
-        if len(invaders) > 0:
-            return super().choose_action(game_state)
+        if not invaders: #continue the patrol route when no invader is visible
+            self.update_patrol_index(game_state)
 
-        # Otherwise, follow the patrol route
-        my_pos = game_state.get_agent_position(self.index)
+        actions = game_state.get_legal_actions(self.index)  #evaluate all legal actions and select one with the highest score
+        
+        #try to not stop moving when other movements are available
+        if Directions.STOP in actions and len(actions) > 1:
+            actions.remove(Directions.STOP)
 
-        target = self.home_positions[self.patrol_index]
+        values = [self.evaluate(game_state, a) for a in actions]
+        max_value = max(values)
+        best_actions = [a for a, v in zip(actions, values) if v == max_value]
 
-        if nearest_point(my_pos) == target:
-            self.patrol_index += self.patrol_direction
+        return random.choice(best_actions)
 
-            if self.patrol_index >= len(self.home_positions) - 1:
-                self.patrol_index = len(self.home_positions) - 1
-                self.patrol_direction = -1
-
-            elif self.patrol_index <= 0:
-                self.patrol_index = 0
-                self.patrol_direction = 1
-
-            target = self.home_positions[self.patrol_index]
-
-        actions = game_state.get_legal_actions(self.index)
-
-        best_action = None
-        best_distance = float('inf')
-
+    def get_features(self, game_state, action):
+        features = util.Counter()
+        #generate the successor state resulting from the proposed action
+        successor = self.get_successor(game_state, action)
+        my_state = successor.get_agent_state(self.index)
+        my_pos = my_state.get_position()
         walls = game_state.get_walls()
         middle = walls.width // 2
 
-        for action in actions:
-            successor = self.get_successor(game_state, action)
-    
-            next_pos = successor.get_agent_position(self.index)
+        #reward remaining in our territory and penalize crossing the border so the defender doesn't leave its territory
+        features['on_defense'] = 1 if not my_state.is_pacman else 0
 
-            #Never enter enemy territory while patrolling
-            if next_pos is None:
-                continue
+        if my_pos is not None:
+            next_x = nearest_point(my_pos)[0]
+            if (self.red and next_x >= middle) or (not self.red and next_x < middle):
+                features['crossed_border'] = 1
 
-            next_x = nearest_point(next_pos)[0]
-
-            # Red agents must stay on the left side.
-            # Blue agents must stay on the right side.
-            if self.red and next_x >= middle:
-                continue
-
-            if not self.red and next_x < middle:
-                continue
-
-            distance = self.get_maze_distance(
-                nearest_point(next_pos), target
-            )
-
-            if distance < best_distance:
-                best_distance = distance
-                best_action = action
-
-        if best_action is not None:
-            return best_action
-
-        return Directions.STOP
-        
-    def get_features(self, game_state, action):
-        features = util.Counter()
-        successor = self.get_successor(game_state, action)
-
-        my_state = successor.get_agent_state(self.index)
-        my_pos = my_state.get_position()
-
-        # Computes whether we're on defense (1) or offense (0)
-        features['on_defense'] = 1
-        if my_state.is_pacman: features['on_defense'] = 0
-
-        # Computes distance to invaders we can see
+        #identify visible opponents currently invading our territory
         enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
         invaders = [a for a in enemies if a.is_pacman and a.get_position() is not None]
         features['num_invaders'] = len(invaders)
-        if len(invaders) > 0:
-            
-            threats = [] #now we implement the fact that we'll chase the invader with more food
+
+        if invaders and my_pos is not None:
+            #prioritize invaders according to their distance and carried food
+            self.recent_loss_target = None
+            threats = []
+            min_inv_dist = float('inf')
             for invader in invaders:
-                #calculate distance to the invader
-                distance = self.get_maze_distance(
-                    my_pos, invader.get_position()
-                )
-
-                #get the amount of food carried
+                inv_pos = invader.get_position()
+                dist = self.get_maze_distance(nearest_point(my_pos), nearest_point(inv_pos))
+                min_inv_dist = min(min_inv_dist, dist)
                 carrying = invader.num_carrying
-                #calculate how threatening this invader is
-                threat = distance / (carrying + 1) #+1 so it cdoesn't divide by 0
-
+                threat = dist / (carrying + 1)
                 threats.append(threat)
 
             features['invader_threat'] = min(threats)
+            features['invader_distance'] = min_inv_dist
+
+            #penalize actions that risk collision with an invader while scared
+            if my_state.scared_timer > 0 and min_inv_dist <= 1:
+                features['scared_collision_risk'] = 1
 
         else:
-            #no visible invaders: start patrolling
-            patrol_target = self.home_positions[self.patrol_index]
+            #Patrol
+            target = self.recent_loss_target
+
+            #if there is no suspected invasion area, continue patrolling
+            if target is None and self.home_positions:
+                target = self.home_positions[self.patrol_index]
+
             current_pos = game_state.get_agent_position(self.index)
 
-            current_distance = self.get_maze_distance(
-                nearest_point(current_pos), patrol_target
-            )
+            #reward actions that reduce the distance to the current target so the agent follows the invader
+            if target is not None and current_pos is not None and my_pos is not None:
+                curr_dist = self.get_maze_distance(nearest_point(current_pos), target)
+                next_dist = self.get_maze_distance(nearest_point(my_pos), target)
+                features['patrol_progress'] = curr_dist - next_dist
 
-            next_distance = self.get_maze_distance(
-                nearest_point(my_pos), patrol_target
-            )
+        #discourage unnecessary stopping and reversing direction
+        if action == Directions.STOP:
+            features['stop'] = 1
 
-            features['patrol_progress'] = current_distance - next_distance
-
-        if action == Directions.STOP: features['stop'] = 1
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
-        if action == rev: features['reverse'] = 1
+        if action == rev:
+            features['reverse'] = 1
 
         return features
 
     def get_weights(self, game_state, action):
         my_state = game_state.get_agent_state(self.index)
+        
+        #adapt the invader response according to the scared timer
+        threat_weight = 6.0 if my_state.scared_timer > 0 else -12.0
 
-        if my_state.scared_timer > 0:
-            invader_weight = 10   #Move away from invaders
-        else:
-            invader_weight = -10  #Chase invaders
-
-        return {'num_invaders': -1000, 'on_defense': 100, 'invader_threat': invader_weight, 'patrol_distance':-2, 'patrol_progress': 5, 'stop': -100, 'reverse': -2}
-
-
-
-class ReflexAgent(CaptureAgent):
-    """
-    A reflex agent chooses an action at each choice point by examining
-    its alternatives via a state evaluation function.
-
-    The code below is provided as a guide.  You are welcome to change
-    it in any way you see fit, so long as you don't touch our method
-    headers.
-    """
-
-
-    def get_action(self, game_state):
-        """
-        You do not need to change this method, but you're welcome to.
-
-        get_action chooses among the best options according to the evaluation function.
-
-        Just like in the previous project, get_action takes a GameState and returns
-        some Directions.X for some X in the set {NORTH, SOUTH, WEST, EAST, STOP}
-        """
-        # Collect legal moves and successor states
-        legal_moves = game_state.get_legal_actions()
-
-        # Choose one of the best actions
-        scores = [self.evaluation_function(game_state, action) for action in legal_moves]
-        best_score = max(scores)
-        best_indices = [index for index in range(len(scores)) if scores[index] == best_score]
-        chosen_index = random.choice(best_indices) # Pick randomly among the best
-
-        "Add more of your code here if you want to"
-
-        return legal_moves[chosen_index]
-
-"""
-def food_heuristic(state, problem):
-
-    #function that computes h_n, in other words, the heuristic estimation
-
-    position, food_grid = state
-
-    "*** YOUR CODE HERE ***"
-    food_list = food_grid.as_list() #list with food
-
-    h_n = len(food_list) #h(n)
-    
-    if h_n == 0: #goal aware. There is no food, so the heuristic estimation is 0
-        return 0
-
-    A = -1 #Initialization of the max distance of a food from the pacman
-    pos1 = None # Position (currently none) of A
-    for i in food_list: # Iterate through the list of food
-        h_n = util.manhattan_distance(i,position) # Manhattan distance --> abs( xy1[0] - xy2[0] ) + abs( xy1[1] - xy2[1] )
-        if h_n>A: #Update A so it gets the needed max value
-            A = h_n
-            pos1 = i # Update coordinates of A
-
-            
-    B = -1 #We initialize B: It will have the maximum distance from pos1 to the next food
-    for i in food_list: #we iterate through the list of food
-            h_n = util.manhattan_distance(i,pos1) # Manhattan distance --> abs( xy1[0] - xy2[0] ) + abs( xy1[1] - xy2[1] )
-            if h_n>B: #If this new distance is bigger than the current distance....
-                B = h_n #We update B to the new distance
-
-    return A+B #We return the sum of the 2 distances
-
-"""
-
-"""
-def a_star_search(problem, heuristic=null_heuristic):
-    "*** YOUR CODE HERE ***"
-
-    visited = set() #list of visited paths. In the begginning, this is empty
-    
-    priorqueue = util.PriorityQueue() #We need a priority queue to know which path do we take  
-
-    start_heuristic = heuristic(problem.get_start_state(),problem) #we initialize the heuristic funcion giving 2 arguments:
-                                                                   #our problem
-                                                                   #the initial position
-    
-    priorqueue.push((problem.get_start_state(),[],0),start_heuristic) #we store our initial position, 
-    #the action we take (initially no action), initial cost (0), and the heuristic function to find the shortest distance
-    
-    while not priorqueue.is_empty():
-        coords, direction, cost = priorqueue.pop() #we receive the state with less cost h(n) + g(n) (coordinates (x,y) of the possible visit) 
-                                        #the type of movement (if we go north, south, east or west) 
-                                        #and cost
-
-        #case number 1: we reach the goal:
-        if problem.is_goal_state(coords): 
-            return direction #we return to which direction we went
-
-        #case number 2: we didn't reach the goal, we need to find it
-
-        if coords not in visited: #we only do the next lines of code if the node was not visited before
-            visited.add(coords) #we store the coordinates because now they will be visited (so we won't visit it again)
-
-            for i in problem.get_successors(coords): #i is formed of [(coordinates x,y),movement,cost]
-                next_coords = i[0] #next coords (x,y)
-                next_dir = i[1] #south,west...
-                next_cost = i[2] #next Cost
-
-                g_n = cost + next_cost #current total cost
-                h_n = heuristic(next_coords,problem) #heuristic estimation
-                total_sum = g_n + h_n #we do the sum of the total cost and the 
-                #Manhattan distance heuristic
-
-                if next_coords not in visited:  #We will do this movement because the coordinates were not visited
-                    priorqueue.push((next_coords, direction + [next_dir],g_n),total_sum) #we store it for later
-
-    util.raise_not_defined()
-"""
+        return {'num_invaders': -200,'on_defense': 150,'crossed_border': -1000,'invader_threat': threat_weight,'invader_distance': -2.0 if my_state.scared_timer == 0 else 0.0,'scared_collision_risk': -800,'patrol_progress': 8.0,'stop': -150,'reverse': -4.0,}
