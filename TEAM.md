@@ -10,6 +10,6 @@
 
 **Team members:**
 
-* Student 1's 210518 - Judit Jiménez Fornos - judit.jimenez04@estudiant.upf.edu - JuddZzz
-* Student 2's 196747 - Amanda Imbre Pérez - amanda.imbre01@estudiant.upf.edu - amandaimbre
+* 210518 - Judit Jiménez Fornos - judit.jimenez04@estudiant.upf.edu - JuddZzz
+* 196747 - Amanda Imbre Pérez - amanda.imbre01@estudiant.upf.edu - amandaimbre
 
