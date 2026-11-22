@@ -1,18 +1,15 @@
 # Team Information
 
-**Course:** _[Intel·ligència Artificial 2026-24304-T1]_
+**Course:** Intel·ligència Artificial 2026-24304-T1
 
 **Semester:** Semester 1, 2026
 
-**Instructor:** _[Ahana deb]_
+**Instructor:** Anders Jonsson
 
-**Team name:** _[Fantasmikos]_
+**Team name:** Fantasmikos
 
 **Team members:**
 
 * Student 1's 210518 - Judit Jiménez Fornos - judit.jimenez04@estudiant.upf.edu - JuddZzz
 * Student 2's 196747 - Amanda Imbre Pérez - amanda.imbre01@estudiant.upf.edu - amandaimbre
 
-Replace the lines above with the correct details of members. Delete or add lines as needed.
-
-Student numbers should just be the **numbers**.
